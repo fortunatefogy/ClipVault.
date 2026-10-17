@@ -5,6 +5,7 @@ ClipVault is a personal library for saving links, notes, and file references in 
 ## Features
 
 - Save, edit, search, sort, and filter links, notes, text, and file references.
+- Receive shared text and links from Android apps; shared links are saved to the library automatically.
 - Detect copied URLs when the app opens or resumes, with a setting to turn automatic clipboard prompts off.
 - View link previews and open saved URLs from item details.
 - Organize saved items with automatic and custom tags, favorites, and read status.

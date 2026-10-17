@@ -1614,11 +1614,14 @@ class _BackupsScreenState extends State<BackupsScreen> {
 
 class _LibraryScreenState extends State<LibraryScreen>
     with WidgetsBindingObserver {
+  static const MethodChannel _shareChannel =
+      MethodChannel('com.example.clipvault/share');
   List<SavedItem> items = [];
   String query = '';
   String filter = 'All';
   bool _checkingClipboard = false;
   bool _loadingItems = true;
+  bool _suppressClipboardForSession = false;
   String _lastSeenClipboardUrl = '';
   LibraryView _libraryView = LibraryView.grid;
   LibrarySort _librarySort = LibrarySort.auto;
@@ -1635,6 +1638,10 @@ class _LibraryScreenState extends State<LibraryScreen>
     WidgetsBinding.instance.addObserver(this);
     _loadViewPreference();
     _refresh(showLoading: true);
+    _shareChannel.setMethodCallHandler(_handleShareMethodCall);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_loadInitialSharedText());
+    });
     _scheduleClipboardCheck();
     _autoBackupTimer = Timer.periodic(const Duration(hours: 1), (_) {
       unawaited(runAutomaticBackupIfDue());
@@ -1644,13 +1651,69 @@ class _LibraryScreenState extends State<LibraryScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _shareChannel.setMethodCallHandler(null);
     _autoBackupTimer?.cancel();
     super.dispose();
   }
 
+  Future<Object?> _handleShareMethodCall(MethodCall call) async {
+    if (call.method == 'sharedText' && call.arguments is String) {
+      unawaited(_saveSharedText(call.arguments as String));
+      return true;
+    }
+    return null;
+  }
+
+  Future<void> _loadInitialSharedText() async {
+    try {
+      final sharedText = await _shareChannel.invokeMethod<String>(
+        'getInitialSharedText',
+      );
+      if (sharedText != null && sharedText.trim().isNotEmpty) {
+        await _saveSharedText(sharedText);
+      }
+    } on PlatformException {
+      // Sharing is only available on Android; ignore a missing platform bridge.
+    } on MissingPluginException {
+      // Keep the library usable when the native share bridge is unavailable.
+    }
+  }
+
+  Future<void> _saveSharedText(String sharedText) async {
+    if (!mounted) return;
+    _suppressClipboardForSession = true;
+    final urls = extractUrls(sharedText);
+    if (urls.isNotEmpty) _lastSeenClipboardUrl = urls.first;
+    if (urls.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No link found in the shared text')),
+      );
+      return;
+    }
+
+    while (_loadingItems && mounted) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    if (!mounted) return;
+
+    final url = urls.first;
+    final metadata = await LinkMetadata.fetch(url);
+    if (!mounted) return;
+    await _add(SavedItem(
+      title: metadata.title.isNotEmpty ? metadata.title : url,
+      url: url,
+      imageUrl: metadata.image,
+      content: metadata.description,
+      type: 'link',
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+    ));
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
+    if (state == AppLifecycleState.paused) {
+      _suppressClipboardForSession = false;
+    } else if (state == AppLifecycleState.resumed) {
       _scheduleClipboardCheck();
       unawaited(runAutomaticBackupIfDue());
     }
@@ -1698,7 +1761,12 @@ class _LibraryScreenState extends State<LibraryScreen>
   }
 
   Future<void> _checkClipboard() async {
-    if (!autoPasteClipboard.value || _checkingClipboard || !mounted) return;
+    if (!autoPasteClipboard.value ||
+        _suppressClipboardForSession ||
+        _checkingClipboard ||
+        !mounted) {
+      return;
+    }
     final route = ModalRoute.of(context);
     if (route != null && !route.isCurrent) return;
     _checkingClipboard = true;
@@ -1706,7 +1774,7 @@ class _LibraryScreenState extends State<LibraryScreen>
       final url = await _clipboardUrl();
       final hasNewClipboardUrl = url.isNotEmpty && url != _lastSeenClipboardUrl;
       _lastSeenClipboardUrl = url;
-      if (hasNewClipboardUrl && mounted) {
+      if (hasNewClipboardUrl && mounted && !_suppressClipboardForSession) {
         await _addLink(initialUrl: url);
       }
     } finally {
