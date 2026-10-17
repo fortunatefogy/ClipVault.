@@ -13,22 +13,8 @@ void main() {
     expect(normalizeClipboardUrl('not a link'), isNull);
   });
 
-  testWidgets('link dialog renders its input and actions', (tester) async {
-    await tester.pumpWidget(MaterialApp(
-      home: Builder(
-        builder: (context) => Scaffold(
-          body: TextButton(
-            onPressed: () => showDialog<void>(
-              context: context,
-              builder: (_) => const AddLinkDialog(),
-            ),
-            child: const Text('Open'),
-          ),
-        ),
-      ),
-    ));
-
-    await tester.tap(find.text('Open'));
+  testWidgets('add link page renders its input and actions', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: AddLinkPage()));
     await tester.pumpAndSettle();
 
     expect(find.text('Add a link'), findsOneWidget);

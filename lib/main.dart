@@ -684,7 +684,73 @@ class ClipVaultApp extends StatelessWidget {
                   borderSide: BorderSide(color: auraGold, width: 1.5)),
             ),
           ),
-          home: const LibraryScreen(),
+          home: const StartupSplashScreen(),
+        ),
+      );
+}
+
+class StartupSplashScreen extends StatefulWidget {
+  const StartupSplashScreen({super.key});
+
+  @override
+  State<StartupSplashScreen> createState() => _StartupSplashScreenState();
+}
+
+class _StartupSplashScreenState extends State<StartupSplashScreen> {
+  @override
+  void initState() {
+    super.initState();
+    Future<void>.delayed(const Duration(milliseconds: 750), () {
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        PageRouteBuilder<void>(
+          pageBuilder: (_, __, ___) => const LibraryScreen(),
+          transitionsBuilder: (_, animation, __, child) => FadeTransition(
+            opacity: animation,
+            child: child,
+          ),
+          transitionDuration: const Duration(milliseconds: 220),
+        ),
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        backgroundColor: bg,
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(30),
+                child: Image.asset(
+                  'assets/Logo/logo.png',
+                  width: 112,
+                  height: 112,
+                  fit: BoxFit.cover,
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'ClipVault',
+                style: GoogleFonts.playpenSans(
+                  color: primaryText,
+                  fontSize: 28,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.2,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Your personal library',
+                style: GoogleFonts.playpenSans(
+                  color: secondaryText,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
         ),
       );
 }
@@ -1662,10 +1728,10 @@ class _LibraryScreenState extends State<LibraryScreen>
 
   Future<void> _addLink({String initialUrl = ''}) async {
     if (!mounted) return;
-    final result = await showDialog<SavedItem>(
-        context: context,
-        useRootNavigator: true,
-        builder: (_) => AddLinkDialog(initialUrl: initialUrl));
+    final result = await Navigator.of(context, rootNavigator: true)
+        .push<SavedItem>(MaterialPageRoute(
+      builder: (_) => AddLinkPage(initialUrl: initialUrl),
+    ));
     if (result != null && mounted) await _add(result);
   }
 
@@ -3333,14 +3399,14 @@ class _ItemEditorScreenState extends State<ItemEditorScreen> {
       );
 }
 
-class AddLinkDialog extends StatefulWidget {
+class AddLinkPage extends StatefulWidget {
   final String initialUrl;
-  const AddLinkDialog({super.key, this.initialUrl = ''});
+  const AddLinkPage({super.key, this.initialUrl = ''});
   @override
-  State<AddLinkDialog> createState() => _AddLinkDialogState();
+  State<AddLinkPage> createState() => _AddLinkPageState();
 }
 
-class _AddLinkDialogState extends State<AddLinkDialog> {
+class _AddLinkPageState extends State<AddLinkPage> {
   final _url = TextEditingController();
   bool _loading = false;
   bool _fetched = false;
@@ -3414,118 +3480,122 @@ class _AddLinkDialogState extends State<AddLinkDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final maxHeight = MediaQuery.sizeOf(context).height * .78;
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: 480, maxHeight: maxHeight),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 22, 24, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('Add a link', style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _url,
-                keyboardType: TextInputType.url,
-                onSubmitted: _fetch,
-                onChanged: (_) {
-                  if (_fetched || _loading) {
-                    setState(() {
-                      _fetched = false;
-                      _meta = const LinkMetadata();
-                    });
-                  }
-                },
-                decoration: InputDecoration(
-                  labelText: 'Link URL',
-                  hintText: 'https://…',
-                  prefixIcon: const Icon(Icons.link),
-                  suffixIcon: IconButton(
-                    tooltip: 'Fetch preview',
-                    onPressed: _loading ? null : () => _fetch(_url.text),
-                    icon: const Icon(Icons.refresh),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 14),
-              Flexible(
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (_loading)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 20),
-                          child: Center(child: CircularProgressIndicator()),
-                        )
-                      else ...[
-                        if (_meta.image.isNotEmpty) ...[
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(14),
-                            child: CachedNetworkImage(
-                              imageUrl: _meta.image,
-                              height: 170,
-                              width: double.infinity,
-                              fit: BoxFit.cover,
-                              placeholder: (_, __) => Container(
-                                height: 170,
-                                color: auraOrange.withValues(alpha: .08),
-                              ),
-                              errorWidget: (_, __, ___) =>
-                                  const SizedBox.shrink(),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                        ],
-                        if (_meta.title.isNotEmpty)
-                          Text(
-                            _meta.title,
-                            style: const TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                        if (_meta.description.isNotEmpty) ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            _meta.description,
-                            maxLines: 4,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: secondaryText,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ],
-                        if (_meta.title.isEmpty &&
-                            _meta.description.isEmpty &&
-                            _meta.image.isEmpty)
-                          const Text(
-                            'Paste or type a link. If your clipboard has one, it is filled in for you.',
-                            style:
-                                TextStyle(color: secondaryText, fontSize: 14),
-                          ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+    return Scaffold(
+      backgroundColor: bg,
+      appBar: AppBar(title: const Text('Add a link')),
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 22, 24, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  TextButton(
-                    onPressed: _loading ? null : () => Navigator.pop(context),
-                    child: const Text('Cancel'),
+                  TextField(
+                    controller: _url,
+                    keyboardType: TextInputType.url,
+                    onSubmitted: _fetch,
+                    onChanged: (_) {
+                      if (_fetched || _loading) {
+                        setState(() {
+                          _fetched = false;
+                          _meta = const LinkMetadata();
+                        });
+                      }
+                    },
+                    decoration: InputDecoration(
+                      labelText: 'Link URL',
+                      hintText: 'https://…',
+                      prefixIcon: const Icon(Icons.link),
+                      suffixIcon: IconButton(
+                        tooltip: 'Fetch preview',
+                        onPressed: _loading ? null : () => _fetch(_url.text),
+                        icon: const Icon(Icons.refresh),
+                      ),
+                    ),
                   ),
-                  const SizedBox(width: 8),
-                  FilledButton(
-                    onPressed: _loading ? null : _save,
-                    child: const Text('Save'),
+                  const SizedBox(height: 14),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (_loading)
+                            const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 20),
+                              child: Center(child: CircularProgressIndicator()),
+                            )
+                          else ...[
+                            if (_meta.image.isNotEmpty) ...[
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(14),
+                                child: CachedNetworkImage(
+                                  imageUrl: _meta.image,
+                                  height: 170,
+                                  width: double.infinity,
+                                  fit: BoxFit.cover,
+                                  placeholder: (_, __) => Container(
+                                    height: 170,
+                                    color: auraOrange.withValues(alpha: .08),
+                                  ),
+                                  errorWidget: (_, __, ___) =>
+                                      const SizedBox.shrink(),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                            ],
+                            if (_meta.title.isNotEmpty)
+                              Text(
+                                _meta.title,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w700),
+                              ),
+                            if (_meta.description.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                _meta.description,
+                                maxLines: 4,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: secondaryText,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ],
+                            if (_meta.title.isEmpty &&
+                                _meta.description.isEmpty &&
+                                _meta.image.isEmpty)
+                              const Text(
+                                'Paste or type a link. If your clipboard has one, it is filled in for you.',
+                                style: TextStyle(
+                                    color: secondaryText, fontSize: 14),
+                              ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed:
+                            _loading ? null : () => Navigator.pop(context),
+                        child: const Text('Cancel'),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        onPressed: _loading ? null : _save,
+                        child: const Text('Save'),
+                      ),
+                    ],
                   ),
                 ],
               ),
-            ],
+            ),
           ),
         ),
       ),
