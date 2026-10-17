@@ -38,7 +38,10 @@ This document is a quick technical map for agents working in this repository. Re
 ### Library
 
 - Save, edit, open, favorite, mark read/unread, archive, and trash library records.
-- Library layouts: Grid, Compact, Gallery, List, and Simple.
+- Pin records to keep them ahead of other sort results; use the Pinned category to filter them.
+- Create, rename, and delete named collections. The home library uses one collection picker (with item counts) to filter records as collection count grows; names persist immediately, and collection assignments are stored on each item.
+- Long-press a record to enter multi-select, then select all visible items or pin/unpin, favorite, mark read, assign/remove a collection, archive, or move selected records to Trash.
+- Library layouts: Grid, Compact, Gallery, List, and Simple. Grid cards keep a single edit action and show small pin/favorite status badges; pin and favorite actions remain available from item details.
 - Search covers saved item text and tags. The library also provides sort options (Auto, Relevance, Newest, Oldest, Most opened, Recently opened) and filters for item kind, added date, source, and tag.
 - Link details show fetched page metadata, open-link actions, automatic tags, custom tags, and saved date.
 - Notes support attached images; tapping an image opens the full-screen image viewer.
@@ -64,7 +67,7 @@ This document is a quick technical map for agents working in this repository. Re
 
 ## Data model and persistence
 
-`SavedItem` is the library record model. SQLite database file: `clipvault.db`, table: `items`, current schema version: 4.
+`SavedItem` is the library record model. SQLite database file: `clipvault.db`, table: `items`, current schema version: 5.
 
 | Field | Meaning |
 | --- | --- |
@@ -72,13 +75,16 @@ This document is a quick technical map for agents working in this repository. Re
 | `title`, `url`, `content` | Main display text and optional URL/content |
 | `type` | Record kind, such as `link`, `note`, or `file` |
 | `tags` | Custom tags stored on the record |
+| `collection` | Assigned collection name, or empty when unassigned |
 | `image_url` | Link preview image or local note image reference |
-| `favorite`, `is_read`, `is_archived` | Library state flags |
+| `favorite`, `is_read`, `is_archived`, `pinned` | Library state flags |
 | `created_at` | Creation time in Unix milliseconds |
 | `open_count`, `last_opened_at` | Usage/sort metadata |
 | `deleted_at` | Trash timestamp; `null` means not in Trash |
 
-Use `VaultDb` methods for persistence. Schema changes must increment the SQLite version and add a migration in `onUpgrade`; preserve existing user records. `SharedPreferencesAsync` currently stores `app_theme`, `auto_paste_clipboard`, `library_view`, `library_sort`, `auto_backup`, and `last_auto_backup`.
+Use `VaultDb` methods for persistence. Schema changes must increment the SQLite version and add a migration in `onUpgrade`; preserve existing user records. `SharedPreferencesAsync` currently stores `app_theme`, `auto_paste_clipboard`, `library_view`, `library_sort`, `collections` (collection names), `auto_backup`, and `last_auto_backup`.
+
+ClipVault JSON backup files use a versioned envelope containing `collections` and `items`. The importer also accepts the older top-level item-list format. Keep this backward compatibility when changing backup data.
 
 ## Design system
 

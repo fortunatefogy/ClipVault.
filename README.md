@@ -9,6 +9,7 @@ ClipVault is a personal library for saving links, notes, and file references in 
 - Detect copied URLs when the app opens or resumes, with a setting to turn automatic clipboard prompts off.
 - View link previews and open saved URLs from item details.
 - Organize saved items with automatic and custom tags, favorites, and read status.
+- Pin important items, group records into named collections, and apply bulk actions to multi-selected items.
 - Choose from five accent color themes and five library layouts.
 - Move items to Archive or Trash, restore them, or permanently delete them. Trash items expire after 30 days.
 - Create and restore local JSON backups, share backup files, and optionally keep up to ten automatic snapshots.

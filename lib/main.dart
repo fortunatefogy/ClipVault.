@@ -252,7 +252,8 @@ List<String> autoTagsFor(SavedItem item) {
 class SavedItem {
   final int? id;
   final String title, url, content, type, tags, imageUrl;
-  final bool favorite, isRead, isArchived;
+  final String collection;
+  final bool favorite, isRead, isArchived, pinned;
   final int createdAt, openCount;
   final int? lastOpenedAt, deletedAt;
 
@@ -264,9 +265,11 @@ class SavedItem {
     this.type = 'note',
     this.tags = '',
     this.imageUrl = '',
+    this.collection = '',
     this.favorite = false,
     this.isRead = false,
     this.isArchived = false,
+    this.pinned = false,
     required this.createdAt,
     this.openCount = 0,
     this.lastOpenedAt,
@@ -281,9 +284,12 @@ class SavedItem {
           String? type,
           String? tags,
           String? imageUrl,
+          String? collection,
+          bool clearCollection = false,
           bool? favorite,
           bool? isRead,
           int? createdAt,
+          bool? pinned,
           int? openCount,
           int? lastOpenedAt,
           bool? isArchived,
@@ -296,9 +302,11 @@ class SavedItem {
           type: type ?? this.type,
           tags: tags ?? this.tags,
           imageUrl: imageUrl ?? this.imageUrl,
+          collection: clearCollection ? '' : collection ?? this.collection,
           favorite: favorite ?? this.favorite,
           isRead: isRead ?? this.isRead,
           isArchived: isArchived ?? this.isArchived,
+          pinned: pinned ?? this.pinned,
           createdAt: createdAt ?? this.createdAt,
           openCount: openCount ?? this.openCount,
           lastOpenedAt: lastOpenedAt ?? this.lastOpenedAt,
@@ -312,8 +320,10 @@ class SavedItem {
         'type': type,
         'tags': tags,
         'image_url': imageUrl,
+        'collection': collection,
         'favorite': favorite ? 1 : 0,
         'is_read': isRead ? 1 : 0,
+        'pinned': pinned ? 1 : 0,
         'created_at': createdAt,
         'open_count': openCount,
         'last_opened_at': lastOpenedAt,
@@ -329,8 +339,10 @@ class SavedItem {
         type: m['type'] as String? ?? 'note',
         tags: m['tags'] as String? ?? '',
         imageUrl: m['image_url'] as String? ?? '',
+        collection: m['collection'] as String? ?? '',
         favorite: (m['favorite'] as int? ?? 0) == 1,
         isRead: (m['is_read'] as int? ?? 0) == 1,
+        pinned: (m['pinned'] as int? ?? 0) == 1,
         createdAt:
             m['created_at'] as int? ?? DateTime.now().millisecondsSinceEpoch,
         openCount: m['open_count'] as int? ?? 0,
@@ -440,37 +452,44 @@ class VaultDb {
   Future<Database> get database async {
     if (_db != null) return _db!;
     final dir = await getDatabasesPath();
-    _db = await openDatabase(p.join(dir, 'clipvault.db'),
-        version: 4,
-        onCreate: (db, version) => db.execute('''
+    _db = await openDatabase(p.join(dir, 'clipvault.db'), version: 5,
+        onCreate: (db, version) async {
+      await db.execute('''
         CREATE TABLE items(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           title TEXT NOT NULL, url TEXT NOT NULL DEFAULT '',
           content TEXT NOT NULL DEFAULT '', type TEXT NOT NULL DEFAULT 'note',
           tags TEXT NOT NULL DEFAULT '', image_url TEXT NOT NULL DEFAULT '',
+          collection TEXT NOT NULL DEFAULT '',
           favorite INTEGER NOT NULL DEFAULT 0,
-          is_read INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
+          is_read INTEGER NOT NULL DEFAULT 0, pinned INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL,
           open_count INTEGER NOT NULL DEFAULT 0, last_opened_at INTEGER,
           is_archived INTEGER NOT NULL DEFAULT 0, deleted_at INTEGER
         )
-      '''),
-        onUpgrade: (db, oldVersion, newVersion) async {
-          if (oldVersion < 2) {
-            await db.execute(
-                "ALTER TABLE items ADD COLUMN image_url TEXT NOT NULL DEFAULT ''");
-          }
-          if (oldVersion < 3) {
-            await db.execute(
-                'ALTER TABLE items ADD COLUMN open_count INTEGER NOT NULL DEFAULT 0');
-            await db
-                .execute('ALTER TABLE items ADD COLUMN last_opened_at INTEGER');
-          }
-          if (oldVersion < 4) {
-            await db.execute(
-                'ALTER TABLE items ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0');
-            await db.execute('ALTER TABLE items ADD COLUMN deleted_at INTEGER');
-          }
-        });
+      ''');
+    }, onUpgrade: (db, oldVersion, newVersion) async {
+      if (oldVersion < 2) {
+        await db.execute(
+            "ALTER TABLE items ADD COLUMN image_url TEXT NOT NULL DEFAULT ''");
+      }
+      if (oldVersion < 3) {
+        await db.execute(
+            'ALTER TABLE items ADD COLUMN open_count INTEGER NOT NULL DEFAULT 0');
+        await db.execute('ALTER TABLE items ADD COLUMN last_opened_at INTEGER');
+      }
+      if (oldVersion < 4) {
+        await db.execute(
+            'ALTER TABLE items ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0');
+        await db.execute('ALTER TABLE items ADD COLUMN deleted_at INTEGER');
+      }
+      if (oldVersion < 5) {
+        await db.execute(
+            "ALTER TABLE items ADD COLUMN collection TEXT NOT NULL DEFAULT ''");
+        await db.execute(
+            'ALTER TABLE items ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
+      }
+    });
     return _db!;
   }
 
@@ -554,8 +573,7 @@ Future<void> runAutomaticBackupIfDue() async {
     final documents = await getApplicationDocumentsDirectory();
     final directory = Directory(p.join(documents.path, 'backups'));
     if (!await directory.exists()) await directory.create(recursive: true);
-    final data =
-        (await VaultDb.instance.all()).map((item) => item.toMap()).toList();
+    final data = await libraryBackupPayload();
     final file = File(p.join(
         directory.path, 'clipvault-auto-${now.millisecondsSinceEpoch}.json'));
     await file.writeAsString(const JsonEncoder.withIndent('  ').convert(data));
@@ -573,6 +591,15 @@ Future<void> runAutomaticBackupIfDue() async {
     // An unavailable device filesystem should not interrupt library use.
   }
 }
+
+Future<Map<String, Object?>> libraryBackupPayload() async => {
+      'format': 'clipvault',
+      'version': 2,
+      'collections':
+          await SharedPreferencesAsync().getStringList('collections') ?? [],
+      'items':
+          (await VaultDb.instance.all()).map((item) => item.toMap()).toList(),
+    };
 
 class ClipVaultApp extends StatelessWidget {
   const ClipVaultApp({super.key});
@@ -752,6 +779,220 @@ class _StartupSplashScreenState extends State<StartupSplashScreen> {
             ],
           ),
         ),
+      );
+}
+
+class CollectionManagerResult {
+  final List<String> names;
+  final Map<String, String> renamed;
+  const CollectionManagerResult(this.names, this.renamed);
+}
+
+class CollectionManagerScreen extends StatefulWidget {
+  final List<String> names;
+  const CollectionManagerScreen({super.key, required this.names});
+
+  @override
+  State<CollectionManagerScreen> createState() =>
+      _CollectionManagerScreenState();
+}
+
+class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
+  late final List<String> _names = [...widget.names];
+  final Map<String, String> _renamed = {};
+  bool _allowPop = false;
+  bool _finishing = false;
+
+  Future<void> _persistNames() async {
+    await SharedPreferencesAsync().setStringList('collections', _names);
+  }
+
+  CollectionManagerResult get _result => CollectionManagerResult(
+      List<String>.of(_names), Map<String, String>.of(_renamed));
+
+  void _finish() {
+    if (_finishing) return;
+    _finishing = true;
+    setState(() => _allowPop = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.pop(context, _result);
+    });
+  }
+
+  Future<void> _editName({String? existing}) async {
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => CollectionNameDialog(initialName: existing ?? ''),
+    );
+    final trimmed = name?.trim() ?? '';
+    if (trimmed.isEmpty) return;
+    final duplicate = _names.any((value) =>
+        value.toLowerCase() == trimmed.toLowerCase() && value != existing);
+    if (duplicate) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('A collection with that name exists')),
+      );
+      return;
+    }
+    setState(() {
+      if (existing == null) {
+        _names.add(trimmed);
+      } else {
+        _names[_names.indexOf(existing)] = trimmed;
+        var original = existing;
+        for (final entry in _renamed.entries) {
+          if (entry.value == existing) original = entry.key;
+        }
+        if (widget.names.contains(original)) _renamed[original] = trimmed;
+      }
+      _names.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    });
+    await _persistNames();
+  }
+
+  Future<void> _remove(String name) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete collection?'),
+        content: Text('Items in “$name” will stay in your library.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Delete collection')),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      setState(() {
+        _names.remove(name);
+        _renamed.removeWhere((_, renamedName) => renamedName == name);
+      });
+      await _persistNames();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => PopScope<CollectionManagerResult>(
+        canPop: _allowPop,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) _finish();
+        },
+        child: Scaffold(
+          appBar: AppBar(
+            title: const Text('Collections'),
+            actions: [
+              IconButton(
+                tooltip: 'Create collection',
+                onPressed: _editName,
+                icon: const Icon(Icons.add_rounded),
+              ),
+              TextButton(
+                onPressed: _finish,
+                child: const Text('Done'),
+              ),
+            ],
+          ),
+          body: _names.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(28),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.folder_open_outlined,
+                          size: 46, color: auraHighlight),
+                      const SizedBox(height: 12),
+                      const Text('No collections yet'),
+                      const SizedBox(height: 6),
+                      const Text('Create one to group related saved items.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: secondaryText)),
+                      const SizedBox(height: 14),
+                      FilledButton.icon(
+                        onPressed: _editName,
+                        icon: const Icon(Icons.add_rounded),
+                        label: const Text('New collection'),
+                      ),
+                    ]),
+                  ),
+                )
+              : ListView.separated(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: _names.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  itemBuilder: (context, index) {
+                    final name = _names[index];
+                    return Container(
+                      decoration: BoxDecoration(
+                        color: auraSurface,
+                        border: Border.all(color: outline),
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: ListTile(
+                        leading: Icon(Icons.folder_outlined, color: auraOrange),
+                        title: Text(name),
+                        trailing: Wrap(children: [
+                          IconButton(
+                            tooltip: 'Rename collection',
+                            onPressed: () => _editName(existing: name),
+                            icon: const Icon(Icons.edit_outlined),
+                          ),
+                          IconButton(
+                            tooltip: 'Delete collection',
+                            onPressed: () => _remove(name),
+                            icon: const Icon(Icons.delete_outline,
+                                color: errorColor),
+                          ),
+                        ]),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      );
+}
+
+class CollectionNameDialog extends StatefulWidget {
+  final String initialName;
+  const CollectionNameDialog({super.key, required this.initialName});
+
+  @override
+  State<CollectionNameDialog> createState() => _CollectionNameDialogState();
+}
+
+class _CollectionNameDialogState extends State<CollectionNameDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initialName);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text(widget.initialName.isEmpty
+            ? 'New collection'
+            : 'Rename collection'),
+        content: TextField(
+          controller: _controller,
+          autofocus: true,
+          maxLength: 40,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(hintText: 'Collection name'),
+          onSubmitted: (value) => Navigator.pop(context, value.trim()),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, _controller.text.trim()),
+              child: const Text('Save')),
+        ],
       );
 }
 
@@ -994,7 +1235,10 @@ class _DataSettingsPage extends StatelessWidget {
         ],
       ),
     );
-    if (confirmed == true) await VaultDb.instance.clearAll();
+    if (confirmed == true) {
+      await VaultDb.instance.clearAll();
+      await SharedPreferencesAsync().setStringList('collections', []);
+    }
   }
 
   static Widget _dataSectionLabel(String title) => Padding(
@@ -1437,8 +1681,7 @@ class _BackupsScreenState extends State<BackupsScreen> {
 
   Future<void> _snapshot({bool automatic = false}) async {
     final dir = await _backupDirectory();
-    final data =
-        (await VaultDb.instance.all()).map((item) => item.toMap()).toList();
+    final data = await libraryBackupPayload();
     final now = DateTime.now();
     final stamp =
         '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}-${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
@@ -1488,12 +1731,26 @@ class _BackupsScreenState extends State<BackupsScreen> {
                 ]));
     if (ok != true) return;
     try {
-      final decoded = jsonDecode(await file.readAsString()) as List;
-      final items = decoded.map((row) {
+      final decoded = jsonDecode(await file.readAsString());
+      if (decoded is! List && (decoded is! Map || decoded['items'] is! List)) {
+        throw const FormatException('Unsupported ClipVault backup format');
+      }
+      final payload = decoded is Map ? decoded : const <String, Object?>{};
+      final rows = decoded is List ? decoded : payload['items'] as List? ?? [];
+      final items = rows.map((row) {
         final map = Map<String, Object?>.from(row as Map);
         map.remove('id');
         return SavedItem.fromMap(map);
       }).toList();
+      final restoredCollections = payload['collections'] is List
+          ? (payload['collections'] as List).whereType<String>().toList()
+          : items
+              .map((item) => item.collection)
+              .where((name) => name.isNotEmpty)
+              .toSet()
+              .toList();
+      await SharedPreferencesAsync()
+          .setStringList('collections', restoredCollections);
       await VaultDb.instance.replaceAll(items);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1623,6 +1880,9 @@ class _LibraryScreenState extends State<LibraryScreen>
   bool _loadingItems = true;
   bool _suppressClipboardForSession = false;
   String _lastSeenClipboardUrl = '';
+  final Set<int> _selectedItemIds = {};
+  List<String> _collectionNames = [];
+  String? _selectedCollection;
   LibraryView _libraryView = LibraryView.grid;
   LibrarySort _librarySort = LibrarySort.auto;
   String _typeFilter = 'All';
@@ -1637,6 +1897,7 @@ class _LibraryScreenState extends State<LibraryScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadViewPreference();
+    _loadCollectionNames();
     _refresh(showLoading: true);
     _shareChannel.setMethodCallHandler(_handleShareMethodCall);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1736,6 +1997,316 @@ class _LibraryScreenState extends State<LibraryScreen>
         if (sort.isNotEmpty) _librarySort = sort.first;
       });
     }
+  }
+
+  Future<void> _loadCollectionNames() async {
+    final names = <String>{
+      ...(await _preferences.getStringList('collections') ?? []),
+      ...(await VaultDb.instance.all())
+          .map((item) => item.collection)
+          .where((name) => name.isNotEmpty),
+    };
+    await _setCollectionNames(names.toList());
+    if (mounted &&
+        _selectedCollection != null &&
+        !_collectionNames.contains(_selectedCollection)) {
+      setState(() => _selectedCollection = null);
+    }
+  }
+
+  Future<void> _setCollectionNames(List<String> names) async {
+    final normalized = names
+        .map((name) => name.trim())
+        .where((name) => name.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    await _preferences.setStringList('collections', normalized);
+    if (mounted) setState(() => _collectionNames = normalized);
+  }
+
+  Future<void> _manageCollections() async {
+    final result = await Navigator.of(context).push<CollectionManagerResult>(
+      MaterialPageRoute(
+        builder: (_) => CollectionManagerScreen(names: _collectionNames),
+      ),
+    );
+    if (result == null) return;
+    final updated = result.names;
+    final retained = updated.toSet();
+    for (final item in items) {
+      final renamed = result.renamed[item.collection];
+      if (renamed != null) {
+        await VaultDb.instance.save(item.copyWith(collection: renamed));
+      } else if (item.collection.isNotEmpty &&
+          !retained.contains(item.collection)) {
+        await VaultDb.instance.save(item.copyWith(clearCollection: true));
+      }
+    }
+    await _setCollectionNames(updated);
+    await _refresh();
+    if (_selectedCollection != null) {
+      final renamedFilter = result.renamed[_selectedCollection];
+      if (renamedFilter != null) {
+        setState(() => _selectedCollection = renamedFilter);
+      } else if (!retained.contains(_selectedCollection)) {
+        setState(() => _selectedCollection = null);
+      }
+    }
+  }
+
+  Future<void> _chooseCollection() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: auraSurface,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+          children: [
+            const ListTile(title: Text('Choose collection')),
+            ListTile(
+              leading: const Icon(Icons.all_inbox_outlined),
+              title: const Text('All collections'),
+              trailing: _selectedCollection == null
+                  ? Icon(Icons.check_rounded, color: auraOrange)
+                  : null,
+              onTap: () => Navigator.pop(sheetContext, ''),
+            ),
+            for (final name in _collectionNames)
+              ListTile(
+                leading: const Icon(Icons.folder_outlined),
+                title: Text(name),
+                subtitle: Text(
+                  '${items.where((item) => item.collection == name).length} items',
+                ),
+                trailing: _selectedCollection == name
+                    ? Icon(Icons.check_rounded, color: auraOrange)
+                    : null,
+                onTap: () => Navigator.pop(sheetContext, name),
+              ),
+            const Divider(),
+            ListTile(
+              leading: Icon(Icons.settings_outlined, color: auraOrange),
+              title: const Text('Manage collections'),
+              onTap: () => Navigator.pop(sheetContext, '__manage__'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (selected == null || !mounted) return;
+    if (selected == '__manage__') {
+      await _manageCollections();
+      return;
+    }
+    setState(() => _selectedCollection = selected.isEmpty ? null : selected);
+  }
+
+  void _toggleSelection(SavedItem item) {
+    final id = item.id;
+    if (id == null) return;
+    setState(() {
+      if (!_selectedItemIds.add(id)) _selectedItemIds.remove(id);
+    });
+  }
+
+  void _handleItemTap(SavedItem item) {
+    if (_selectedItemIds.isNotEmpty) {
+      _toggleSelection(item);
+    } else {
+      _open(item);
+    }
+  }
+
+  void _selectAllVisible(List<SavedItem> visible) {
+    setState(() => _selectedItemIds
+        .addAll(visible.map((item) => item.id).whereType<int>()));
+  }
+
+  Future<void> _bulkUpdate({
+    bool? pinned,
+    bool? favorite,
+    bool? isRead,
+    bool archive = false,
+    bool trash = false,
+  }) async {
+    final selected = items
+        .where((item) => item.id != null && _selectedItemIds.contains(item.id))
+        .toList();
+    for (final item in selected) {
+      if (trash && item.id != null) {
+        await VaultDb.instance.moveToTrash(item.id!);
+      } else {
+        await VaultDb.instance.save(item.copyWith(
+          pinned: pinned,
+          favorite: favorite,
+          isRead: isRead,
+          isArchived: archive ? true : null,
+        ));
+      }
+    }
+    if (mounted) setState(_selectedItemIds.clear);
+    await _refresh();
+    if (mounted && selected.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Updated ${selected.length} items')),
+      );
+    }
+  }
+
+  Future<void> _bulkAssignCollection() async {
+    final selectedCollection = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: auraSurface,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.only(bottom: 12),
+          children: [
+            const ListTile(title: Text('Add to collection')),
+            for (final name in _collectionNames)
+              ListTile(
+                leading: const Icon(Icons.folder_outlined),
+                title: Text(name),
+                onTap: () => Navigator.pop(sheetContext, name),
+              ),
+            ListTile(
+              leading: Icon(Icons.add_rounded, color: auraOrange),
+              title: const Text('Create collection'),
+              onTap: () async {
+                Navigator.pop(sheetContext);
+                await _manageCollections();
+                if (mounted && _collectionNames.isNotEmpty) {
+                  final chosen = await showModalBottomSheet<String>(
+                    context: context,
+                    backgroundColor: auraSurface,
+                    builder: (context) => SafeArea(
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: [
+                          const ListTile(title: Text('Choose collection')),
+                          for (final name in _collectionNames)
+                            ListTile(
+                              leading: const Icon(Icons.folder_outlined),
+                              title: Text(name),
+                              onTap: () => Navigator.pop(context, name),
+                            ),
+                        ],
+                      ),
+                    ),
+                  );
+                  if (chosen != null)
+                    await _assignSelectionToCollection(chosen);
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_off_outlined),
+              title: const Text('Remove from collection'),
+              onTap: () => Navigator.pop(sheetContext, ''),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (selectedCollection != null) {
+      await _assignSelectionToCollection(selectedCollection);
+    }
+  }
+
+  Future<void> _assignSelectionToCollection(String name) async {
+    for (final item in items.where(
+        (item) => item.id != null && _selectedItemIds.contains(item.id))) {
+      await VaultDb.instance.save(item.copyWith(
+        collection: name,
+        clearCollection: name.isEmpty,
+      ));
+    }
+    if (mounted) setState(_selectedItemIds.clear);
+    await _refresh();
+  }
+
+  Widget _selectionActionBar(List<SavedItem> visible) {
+    final selectedItems = items
+        .where((item) => item.id != null && _selectedItemIds.contains(item.id));
+    final hasPinned = selectedItems.any((item) => item.pinned);
+    final allRead =
+        selectedItems.isNotEmpty && selectedItems.every((item) => item.isRead);
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        decoration: BoxDecoration(
+          color: auraSurface,
+          border: Border(top: BorderSide(color: outline)),
+        ),
+        child: Row(
+          children: [
+            Text('${_selectedItemIds.length}',
+                style: TextStyle(
+                    color: auraHighlight, fontWeight: FontWeight.w800)),
+            const SizedBox(width: 4),
+            Expanded(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(children: [
+                  IconButton(
+                    tooltip: 'Select all visible',
+                    onPressed: () => _selectAllVisible(visible),
+                    icon: const Icon(Icons.select_all_rounded),
+                  ),
+                  IconButton(
+                    tooltip: hasPinned ? 'Unpin selected' : 'Pin selected',
+                    onPressed: () => _bulkUpdate(pinned: !hasPinned),
+                    icon: Icon(hasPinned
+                        ? Icons.push_pin_rounded
+                        : Icons.push_pin_outlined),
+                  ),
+                  IconButton(
+                    tooltip: 'Toggle favorite',
+                    onPressed: () => _bulkUpdate(
+                        favorite:
+                            !selectedItems.every((item) => item.favorite)),
+                    icon: const Icon(Icons.favorite_border_rounded),
+                  ),
+                  IconButton(
+                    tooltip:
+                        allRead ? 'Mark selected unread' : 'Mark selected read',
+                    onPressed: () => _bulkUpdate(isRead: !allRead),
+                    icon: Icon(allRead
+                        ? Icons.mark_email_unread_outlined
+                        : Icons.mark_email_read_outlined),
+                  ),
+                  IconButton(
+                    tooltip: 'Add to collection',
+                    onPressed: _bulkAssignCollection,
+                    icon: const Icon(Icons.folder_outlined),
+                  ),
+                  IconButton(
+                    tooltip: 'Archive selected',
+                    onPressed: () => _bulkUpdate(archive: true),
+                    icon: const Icon(Icons.archive_outlined),
+                  ),
+                  IconButton(
+                    tooltip: 'Move selected to trash',
+                    onPressed: () => _bulkUpdate(trash: true),
+                    icon: const Icon(Icons.delete_outline, color: errorColor),
+                  ),
+                  IconButton(
+                    tooltip: 'Cancel selection',
+                    onPressed: () => setState(_selectedItemIds.clear),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ]),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _refresh({bool showLoading = false}) async {
@@ -1844,7 +2415,7 @@ class _LibraryScreenState extends State<LibraryScreen>
   }
 
   Future<void> _export() async {
-    final data = (await VaultDb.instance.all()).map((e) => e.toMap()).toList();
+    final data = await libraryBackupPayload();
     final dir = await getApplicationDocumentsDirectory();
     final file = File(p.join(dir.path, 'clipvault-backup.json'));
     await file.writeAsString(const JsonEncoder.withIndent('  ').convert(data));
@@ -1860,13 +2431,26 @@ class _LibraryScreenState extends State<LibraryScreen>
       final inputFile = File(result.files.single.path!);
       final contents = await inputFile.readAsString();
       final restored = <SavedItem>[];
+      List<String>? importedCollections;
       if (p.extension(inputFile.path).toLowerCase() == '.json') {
-        final decoded = jsonDecode(contents) as List;
-        restored.addAll(decoded.map((e) {
+        final decoded = jsonDecode(contents);
+        final payload = decoded is Map ? decoded : const <String, Object?>{};
+        final rows =
+            decoded is List ? decoded : payload['items'] as List? ?? [];
+        if (payload['collections'] is List) {
+          importedCollections =
+              (payload['collections'] as List).whereType<String>().toList();
+        }
+        restored.addAll(rows.map((e) {
           final map = Map<String, Object?>.from(e as Map);
           map.remove('id');
           return SavedItem.fromMap(map);
         }));
+        importedCollections ??= restored
+            .map((item) => item.collection)
+            .where((name) => name.isNotEmpty)
+            .toSet()
+            .toList();
       } else {
         final anchors = RegExp(
                 r'''<a\b[^>]*href=["']([^"']+)["'][^>]*>(.*?)</a>''',
@@ -1889,6 +2473,11 @@ class _LibraryScreenState extends State<LibraryScreen>
         }
       }
       final existing = await VaultDb.instance.all();
+      if (importedCollections != null) {
+        final current = await _preferences.getStringList('collections') ?? [];
+        await _setCollectionNames(
+            {...current, ...importedCollections}.toList());
+      }
       final keys = existing
           .map((item) => item.url.isNotEmpty
               ? 'url:${item.url}'
@@ -1977,6 +2566,7 @@ class _LibraryScreenState extends State<LibraryScreen>
   }
 
   int _compareItems(SavedItem a, SavedItem b, String query) {
+    if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
     final sort = _librarySort == LibrarySort.auto
         ? (query.isEmpty ? LibrarySort.newest : LibrarySort.relevance)
         : _librarySort;
@@ -2070,6 +2660,7 @@ class _LibraryScreenState extends State<LibraryScreen>
     String? date,
     String? source,
     String? tag,
+    String? collection,
   }) {
     final q = query.toLowerCase();
     final selectedCategory = category ?? filter;
@@ -2086,17 +2677,19 @@ class _LibraryScreenState extends State<LibraryScreen>
 
     return items.where((item) {
       if (item.isArchived || item.deletedAt != null) return false;
+      final selectedCollection = collection ?? _selectedCollection;
       final itemTags = [
         ...savedTagsFor(item.tags),
         ...autoTagsFor(item),
       ].map((value) => value.toLowerCase()).toSet();
       final searchableTags = itemTags.map((value) => '#$value').join(' ');
       final matchesQuery =
-          '${item.title} ${item.url} ${item.content} ${item.tags} $searchableTags'
+          '${item.title} ${item.url} ${item.content} ${item.tags} ${item.collection} $searchableTags'
               .toLowerCase()
               .contains(q);
       final matchesCategory = selectedCategory == 'All' ||
           (selectedCategory == 'Favorites' && item.favorite) ||
+          (selectedCategory == 'Pinned' && item.pinned) ||
           (selectedCategory == 'Unread' && !item.isRead) ||
           (selectedCategory == 'Links' && item.url.isNotEmpty) ||
           (selectedCategory == 'Notes' &&
@@ -2113,22 +2706,27 @@ class _LibraryScreenState extends State<LibraryScreen>
       final normalizedTag = selectedTag.toLowerCase().replaceFirst('#', '');
       final matchesTag =
           selectedTag == 'All' || itemTags.contains(normalizedTag);
+      final matchesCollection =
+          selectedCollection == null || item.collection == selectedCollection;
       return matchesQuery &&
           matchesCategory &&
           matchesType &&
           matchesDate &&
           matchesSource &&
-          matchesTag;
+          matchesTag &&
+          matchesCollection;
     }).toList();
   }
 
-  int _activeFilterCount() => [
+  int _activeFilterCount() =>
+      [
         filter,
         _typeFilter,
         _dateFilter,
         _sourceFilter,
         _tagFilter,
-      ].where((value) => value != 'All').length;
+      ].where((value) => value != 'All').length +
+      (_selectedCollection == null ? 0 : 1);
 
   Future<void> _showFilterOptions() async {
     var draftCategory = filter;
@@ -2262,6 +2860,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                             'Links',
                             'Notes',
                             'Favorites',
+                            'Pinned',
                             'Unread'
                           ],
                           draftCategory,
@@ -2404,48 +3003,62 @@ class _LibraryScreenState extends State<LibraryScreen>
 
     return Scaffold(
       appBar: AppBar(
-        title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('ClipVault',
-              style:
-                  TextStyle(fontWeight: FontWeight.w800, letterSpacing: -.5)),
-          Text('Your personal library',
-              style: TextStyle(fontSize: 13, color: auraHighlight)),
-        ]),
+        title: _selectedItemIds.isNotEmpty
+            ? Text('${_selectedItemIds.length} selected')
+            : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('ClipVault',
+                    style: TextStyle(
+                        fontWeight: FontWeight.w800, letterSpacing: -.5)),
+                Text('Your personal library',
+                    style: TextStyle(fontSize: 13, color: auraHighlight)),
+              ]),
         actions: [
-          IconButton(
-              tooltip: 'Change view',
-              onPressed: _showViewOptions,
-              icon: Icon(_libraryView.icon)),
-          IconButton(
-              tooltip: 'Export backup',
-              onPressed: _export,
-              icon: const Icon(Icons.file_upload_outlined)),
-          PopupMenuButton<String>(
-            onSelected: (v) async {
-              if (v == 'settings') {
-                await Navigator.of(context).push<void>(MaterialPageRoute(
-                  builder: (_) => SettingsScreen(
-                    items: items,
-                    onImport: _import,
-                    onExport: _export,
-                  ),
-                ));
-                await _refresh();
-                return;
-              }
-              if (v == 'import') await _import();
-              if (v == 'file') await _pickFile();
-              if (v == 'note') await _edit();
-            },
-            itemBuilder: (_) => [
-              const PopupMenuItem(value: 'note', child: Text('Write a note')),
-              const PopupMenuItem(
-                  value: 'import', child: Text('Import JSON backup')),
-              PopupMenuItem(
-                  value: 'file', child: Text('Save a file reference')),
-              const PopupMenuItem(value: 'settings', child: Text('Settings')),
-            ],
-          ),
+          if (_selectedItemIds.isNotEmpty)
+            IconButton(
+              tooltip: 'Cancel selection',
+              onPressed: () => setState(_selectedItemIds.clear),
+              icon: const Icon(Icons.close_rounded),
+            )
+          else ...[
+            IconButton(
+                tooltip: 'Change view',
+                onPressed: _showViewOptions,
+                icon: Icon(_libraryView.icon)),
+            IconButton(
+                tooltip: 'Export backup',
+                onPressed: _export,
+                icon: const Icon(Icons.file_upload_outlined)),
+            PopupMenuButton<String>(
+              onSelected: (v) async {
+                if (v == 'settings') {
+                  await Navigator.of(context).push<void>(MaterialPageRoute(
+                    builder: (_) => SettingsScreen(
+                      items: items,
+                      onImport: _import,
+                      onExport: _export,
+                    ),
+                  ));
+                  await _refresh();
+                  await _loadCollectionNames();
+                  return;
+                }
+                if (v == 'import') await _import();
+                if (v == 'file') await _pickFile();
+                if (v == 'note') await _edit();
+                if (v == 'collections') await _manageCollections();
+              },
+              itemBuilder: (_) => [
+                const PopupMenuItem(value: 'note', child: Text('Write a note')),
+                const PopupMenuItem(
+                    value: 'import', child: Text('Import JSON backup')),
+                PopupMenuItem(
+                    value: 'file', child: Text('Save a file reference')),
+                const PopupMenuItem(value: 'settings', child: Text('Settings')),
+                const PopupMenuItem(
+                    value: 'collections', child: Text('Collections')),
+              ],
+            ),
+          ],
         ],
       ),
       body: Container(
@@ -2528,7 +3141,14 @@ class _LibraryScreenState extends State<LibraryScreen>
               child: ListView(
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  children: ['All', 'Links', 'Notes', 'Favorites', 'Unread']
+                  children: [
+                    'All',
+                    'Links',
+                    'Notes',
+                    'Favorites',
+                    'Pinned',
+                    'Unread'
+                  ]
                       .map((f) => Padding(
                             padding: const EdgeInsets.only(right: 8),
                             child: ChoiceChip(
@@ -2548,6 +3168,29 @@ class _LibraryScreenState extends State<LibraryScreen>
                                 onSelected: (_) => setState(() => filter = f)),
                           ))
                       .toList())),
+          if (_collectionNames.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: OutlinedButton.icon(
+                onPressed: _chooseCollection,
+                icon: const Icon(Icons.folder_open_outlined),
+                label: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(_selectedCollection ?? 'All collections'),
+                ),
+                style: OutlinedButton.styleFrom(
+                  alignment: Alignment.centerLeft,
+                  foregroundColor: _selectedCollection == null
+                      ? secondaryText
+                      : auraHighlight,
+                  side: BorderSide(color: outline),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
+                ),
+              ),
+            ),
           Expanded(
               child: _loadingItems
                   ? _loadingPlaceholder()
@@ -2581,11 +3224,15 @@ class _LibraryScreenState extends State<LibraryScreen>
                       : _buildRecords(shown)),
         ])),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _addLinkFromClipboard,
-        icon: const Icon(Icons.add_link),
-        label: const Text('Add link'),
-      ),
+      bottomNavigationBar:
+          _selectedItemIds.isNotEmpty ? _selectionActionBar(shown) : null,
+      floatingActionButton: _selectedItemIds.isNotEmpty
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: _addLinkFromClipboard,
+              icon: const Icon(Icons.add_link),
+              label: const Text('Add link'),
+            ),
     );
   }
 
@@ -2665,10 +3312,14 @@ class _LibraryScreenState extends State<LibraryScreen>
             color: auraSurface,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(20),
-              side: BorderSide(color: outline),
+              side: BorderSide(
+                  color:
+                      _selectedItemIds.contains(item.id) ? auraOrange : outline,
+                  width: _selectedItemIds.contains(item.id) ? 2 : 1),
             ),
             child: InkWell(
-              onTap: () => _open(item),
+              onTap: () => _handleItemTap(item),
+              onLongPress: () => _toggleSelection(item),
               child: Stack(
                 fit: StackFit.expand,
                 children: [
@@ -2723,7 +3374,8 @@ class _LibraryScreenState extends State<LibraryScreen>
                                             color: secondaryText, fontSize: 12),
                                       ),
                                     ),
-                                    if (item.url.isNotEmpty)
+                                    if (item.url.isNotEmpty &&
+                                        _selectedItemIds.isEmpty)
                                       _cardActionButton(
                                         icon: Icons.open_in_new_rounded,
                                         tooltip: 'Open saved link',
@@ -2765,7 +3417,9 @@ class _LibraryScreenState extends State<LibraryScreen>
                               color: Colors.white,
                               fontWeight: FontWeight.w700)),
                     ),
-                  if (gallery && item.url.isNotEmpty)
+                  if (gallery &&
+                      item.url.isNotEmpty &&
+                      _selectedItemIds.isEmpty)
                     Positioned(
                       right: 4,
                       bottom: 4,
@@ -2776,21 +3430,33 @@ class _LibraryScreenState extends State<LibraryScreen>
                         onPressed: () => _open(item),
                       ),
                     ),
-                  Positioned(
-                    top: 4,
-                    left: 4,
-                    child: _favoriteButton(item, onThumbnail: true),
-                  ),
-                  Positioned(
-                    top: 4,
-                    right: 4,
-                    child: _cardActionButton(
-                      icon: Icons.edit_outlined,
-                      tooltip: 'Edit item',
-                      color: primaryText,
-                      onPressed: () => _edit(item),
+                  if (_selectedItemIds.isNotEmpty)
+                    Positioned(
+                      top: 8,
+                      left: 8,
+                      child: _selectionBadge(item),
                     ),
-                  ),
+                  if (_selectedItemIds.isEmpty) ...[
+                    Positioned(
+                      top: 8,
+                      right: 4,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _cardActionButton(
+                            icon: Icons.edit_outlined,
+                            tooltip: 'Edit item',
+                            color: primaryText,
+                            onPressed: () => _edit(item),
+                          ),
+                          const SizedBox(height: 4),
+                          _favoriteButton(item, onThumbnail: true),
+                          const SizedBox(height: 4),
+                          _pinButton(item, onThumbnail: true),
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -2825,6 +3491,32 @@ class _LibraryScreenState extends State<LibraryScreen>
             ? auraOrange
             : (onThumbnail ? primaryText : mutedText),
         onPressed: () => _runItemAction(item, 'favorite'),
+      );
+
+  Widget _pinButton(SavedItem item, {bool onThumbnail = false}) =>
+      _cardActionButton(
+        icon: item.pinned ? Icons.push_pin_rounded : Icons.push_pin_outlined,
+        tooltip: item.pinned ? 'Unpin item' : 'Pin item',
+        color:
+            item.pinned ? auraOrange : (onThumbnail ? primaryText : mutedText),
+        onPressed: () => _runItemAction(item, 'pin'),
+      );
+
+  Widget _selectionBadge(SavedItem item) => Container(
+        width: 34,
+        height: 34,
+        decoration: BoxDecoration(
+          color: _selectedItemIds.contains(item.id) ? auraOrange : auraDepth,
+          shape: BoxShape.circle,
+          border: Border.all(color: primaryText, width: 1.5),
+        ),
+        child: Icon(
+          _selectedItemIds.contains(item.id)
+              ? Icons.check_rounded
+              : Icons.circle_outlined,
+          color: _selectedItemIds.contains(item.id) ? auraBase : primaryText,
+          size: 20,
+        ),
       );
 
   Widget _heroImage(SavedItem item) {
@@ -2871,11 +3563,14 @@ class _LibraryScreenState extends State<LibraryScreen>
                   yellowCard: false,
                   child: InkWell(
                     borderRadius: BorderRadius.circular(22),
-                    onTap: () => _open(item),
+                    onTap: () => _handleItemTap(item),
+                    onLongPress: () => _toggleSelection(item),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _thumb(item),
+                        _selectedItemIds.isEmpty
+                            ? _thumb(item)
+                            : _selectionBadge(item),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(
@@ -2929,8 +3624,11 @@ class _LibraryScreenState extends State<LibraryScreen>
                             ],
                           ),
                         ),
-                        _favoriteButton(item),
-                        _editButton(item),
+                        if (_selectedItemIds.isEmpty) ...[
+                          _pinButton(item),
+                          _favoriteButton(item),
+                          _editButton(item),
+                        ],
                       ],
                     ),
                   ),
@@ -2957,7 +3655,9 @@ class _LibraryScreenState extends State<LibraryScreen>
                   child: ListTile(
                     contentPadding:
                         const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    leading: _thumb(item),
+                    leading: _selectedItemIds.isEmpty
+                        ? _thumb(item)
+                        : _selectionBadge(item),
                     title: Text(item.title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -2986,11 +3686,15 @@ class _LibraryScreenState extends State<LibraryScreen>
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        _favoriteButton(item),
-                        _editButton(item),
+                        if (_selectedItemIds.isEmpty) ...[
+                          _pinButton(item),
+                          _favoriteButton(item),
+                          _editButton(item),
+                        ],
                       ],
                     ),
-                    onTap: () => _open(item),
+                    onTap: () => _handleItemTap(item),
+                    onLongPress: () => _toggleSelection(item),
                   ),
                 ),
               ));
@@ -3006,11 +3710,13 @@ class _LibraryScreenState extends State<LibraryScreen>
           return _swipeActions(
               item,
               InkWell(
-                onTap: () => _open(item),
+                onTap: () => _handleItemTap(item),
+                onLongPress: () => _toggleSelection(item),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   child: Row(
                     children: [
+                      if (_selectedItemIds.isNotEmpty) _selectionBadge(item),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -3034,8 +3740,11 @@ class _LibraryScreenState extends State<LibraryScreen>
                           ],
                         ),
                       ),
-                      _favoriteButton(item),
-                      _editButton(item),
+                      if (_selectedItemIds.isEmpty) ...[
+                        _pinButton(item),
+                        _favoriteButton(item),
+                        _editButton(item),
+                      ],
                     ],
                   ),
                 ),
@@ -3043,48 +3752,51 @@ class _LibraryScreenState extends State<LibraryScreen>
         },
       );
 
-  Widget _swipeActions(SavedItem item, Widget child) => Slidable(
-        key: ValueKey('saved-${item.id ?? item.createdAt}'),
-        endActionPane: ActionPane(
-          motion: const StretchMotion(),
-          extentRatio: .9,
-          children: [
-            SlidableAction(
-              onPressed: (_) => _runItemAction(item, 'favorite'),
-              backgroundColor: auraOrange,
-              foregroundColor: auraBase,
-              icon: item.favorite
-                  ? Icons.favorite_rounded
-                  : Icons.favorite_border,
-              label: 'Favorite',
-            ),
-            SlidableAction(
-              onPressed: (_) => _runItemAction(item, 'read'),
-              backgroundColor: auraSurface,
-              foregroundColor: primaryText,
-              icon: item.isRead
-                  ? Icons.mark_email_unread_outlined
-                  : Icons.mark_email_read_outlined,
-              label: item.isRead ? 'Unread' : 'Read',
-            ),
-            SlidableAction(
-              onPressed: (_) => _runItemAction(item, 'share'),
-              backgroundColor: auraDepth,
-              foregroundColor: primaryText,
-              icon: Icons.share_outlined,
-              label: 'Share',
-            ),
-            SlidableAction(
-              onPressed: (_) => _runItemAction(item, 'delete'),
-              backgroundColor: errorColor,
-              foregroundColor: primaryText,
-              icon: Icons.delete_outline,
-              label: 'Delete',
-            ),
-          ],
-        ),
-        child: child,
-      );
+  Widget _swipeActions(SavedItem item, Widget child) =>
+      _selectedItemIds.isNotEmpty
+          ? child
+          : Slidable(
+              key: ValueKey('saved-${item.id ?? item.createdAt}'),
+              endActionPane: ActionPane(
+                motion: const StretchMotion(),
+                extentRatio: .9,
+                children: [
+                  SlidableAction(
+                    onPressed: (_) => _runItemAction(item, 'favorite'),
+                    backgroundColor: auraOrange,
+                    foregroundColor: auraBase,
+                    icon: item.favorite
+                        ? Icons.favorite_rounded
+                        : Icons.favorite_border,
+                    label: 'Favorite',
+                  ),
+                  SlidableAction(
+                    onPressed: (_) => _runItemAction(item, 'read'),
+                    backgroundColor: auraSurface,
+                    foregroundColor: primaryText,
+                    icon: item.isRead
+                        ? Icons.mark_email_unread_outlined
+                        : Icons.mark_email_read_outlined,
+                    label: item.isRead ? 'Unread' : 'Read',
+                  ),
+                  SlidableAction(
+                    onPressed: (_) => _runItemAction(item, 'share'),
+                    backgroundColor: auraDepth,
+                    foregroundColor: primaryText,
+                    icon: Icons.share_outlined,
+                    label: 'Share',
+                  ),
+                  SlidableAction(
+                    onPressed: (_) => _runItemAction(item, 'delete'),
+                    backgroundColor: errorColor,
+                    foregroundColor: primaryText,
+                    icon: Icons.delete_outline,
+                    label: 'Delete',
+                  ),
+                ],
+              ),
+              child: child,
+            );
 
   Widget _editButton(SavedItem item) => _cardActionButton(
         icon: Icons.edit_outlined,
@@ -3101,6 +3813,10 @@ class _LibraryScreenState extends State<LibraryScreen>
     }
     if (value == 'favorite') {
       await VaultDb.instance.save(item.copyWith(favorite: !item.favorite));
+      await _refresh();
+    }
+    if (value == 'pin') {
+      await VaultDb.instance.save(item.copyWith(pinned: !item.pinned));
       await _refresh();
     }
     if (value == 'read') {
@@ -3300,8 +4016,10 @@ class _ItemEditorScreenState extends State<ItemEditorScreen> {
         tags: _tags.text.trim(),
         type: _type,
         imageUrl: _imagePath,
+        collection: widget.item?.collection ?? '',
         favorite: widget.item?.favorite ?? false,
         isRead: widget.item?.isRead ?? false,
+        pinned: widget.item?.pinned ?? false,
         createdAt:
             widget.item?.createdAt ?? DateTime.now().millisecondsSinceEpoch,
         openCount: widget.item?.openCount ?? 0,
@@ -3773,6 +4491,7 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
   Future<void> _menu(String v) async {
     if (v == 'edit') await _edit();
     if (v == 'favorite') await _save(item.copyWith(favorite: !item.favorite));
+    if (v == 'pin') await _save(item.copyWith(pinned: !item.pinned));
     if (v == 'read') await _save(item.copyWith(isRead: !item.isRead));
     if (v == 'archive') {
       await _save(item.copyWith(isArchived: true));
@@ -3843,6 +4562,9 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
             tooltip: 'More options',
             onSelected: _menu,
             itemBuilder: (_) => [
+              PopupMenuItem(
+                  value: 'pin',
+                  child: Text(item.pinned ? 'Unpin item' : 'Pin item')),
               PopupMenuItem(
                   value: 'favorite',
                   child:
