@@ -40,7 +40,7 @@ This document is a quick technical map for agents working in this repository. Re
 - Save, edit, open, favorite, mark read/unread, archive, and trash library records.
 - Pin records to keep them ahead of other sort results; use the Pinned category to filter them.
 - Create, rename, and delete named collections. The home library uses one collection picker (with item counts) to filter records as collection count grows; names persist immediately, and collection assignments are stored on each item.
-- Long-press a record to enter multi-select, then select all visible items or pin/unpin, favorite, mark read, assign/remove a collection, archive, or move selected records to Trash.
+- Long-press a record to enter multi-select, then select all visible items or pin/unpin, favorite, mark read, assign/remove a collection, archive, or move selected records to Trash. Selection uses a brief card/badge animation and selection haptic; respect the OS reduced-animation setting.
 - Library layouts: Grid, Compact, Gallery, List, and Simple. Grid cards keep a single edit action and show small pin/favorite status badges; pin and favorite actions remain available from item details.
 - Search covers saved item text and tags. The library also provides sort options (Auto, Relevance, Newest, Oldest, Most opened, Recently opened) and filters for item kind, added date, source, and tag.
 - Link details show fetched page metadata, open-link actions, automatic tags, custom tags, and saved date.
@@ -116,13 +116,14 @@ The default selected palette is **Ember**. Palette selection is stored as a pref
 | Forest | `#34D399` | `#6EE7B7` |
 | Rose | `#FB7185` | `#FDA4AF` |
 
-Use `auraOrange`/`auraGold` for the selected palette accent and `auraHighlight` for its highlight. Use the shared base/surface/text/border values instead of introducing unrelated colors. The UI uses a dark charcoal style with restrained borders and elevation.
+Use `auraOrange`/`auraGold` for the selected palette accent and `auraHighlight` for its highlight. Use the shared base/surface/text/border values instead of introducing unrelated colors. The UI uses dark charcoal surfaces with restrained neumorphic paired highlights and shadows; keep contrast and avoid strong glows.
 
 ### Typography and motion
 
 - The app theme calls `GoogleFonts.playpenSansTextTheme` from `google_fonts` and disables runtime font fetching in `main()`.
 - `assets/fonts/` currently contains Manrope font files. Check font availability and offline behavior before changing typography; keep the README/reference accurate if the configured font changes.
 - `flutter_animate` and `animations` provide UI transitions; `flutter_slidable` provides swipe actions.
+- App-wide routes use Cupertino-style transitions and scroll views use bouncing physics. Grid entrance and selection animations respect reduced-motion preferences; selection uses light haptic feedback.
 
 ## Packages
 

@@ -63,6 +63,19 @@ Color get outline => const Color(0xFF303036);
 const successColor = Color(0xFF34D399);
 const errorColor = Color(0xFFF87171);
 
+List<BoxShadow> softNeumorphicShadows({double strength = 1}) => [
+      BoxShadow(
+        color: Colors.white.withValues(alpha: .035 * strength),
+        blurRadius: 12 * strength,
+        offset: Offset(-4 * strength, -4 * strength),
+      ),
+      BoxShadow(
+        color: Colors.black.withValues(alpha: .34 * strength),
+        blurRadius: 14 * strength,
+        offset: Offset(5 * strength, 6 * strength),
+      ),
+    ];
+
 enum LibraryView { grid, compact, gallery, list, simple }
 
 extension LibraryViewPresentation on LibraryView {
@@ -609,8 +622,18 @@ class ClipVaultApp extends StatelessWidget {
         builder: (context, _) => MaterialApp(
           title: 'ClipVault',
           debugShowCheckedModeBanner: false,
+          scrollBehavior: const ClipVaultScrollBehavior(),
           theme: ThemeData(
             brightness: Brightness.dark,
+            pageTransitionsTheme: const PageTransitionsTheme(
+              builders: {
+                TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+                TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+                TargetPlatform.linux: CupertinoPageTransitionsBuilder(),
+                TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+                TargetPlatform.windows: CupertinoPageTransitionsBuilder(),
+              },
+            ),
             scaffoldBackgroundColor: bg,
             colorScheme: ColorScheme.fromSeed(
                     seedColor: auraGold, brightness: Brightness.dark)
@@ -714,6 +737,14 @@ class ClipVaultApp extends StatelessWidget {
           home: const StartupSplashScreen(),
         ),
       );
+}
+
+class ClipVaultScrollBehavior extends MaterialScrollBehavior {
+  const ClipVaultScrollBehavior();
+
+  @override
+  ScrollPhysics getScrollPhysics(BuildContext context) =>
+      const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics());
 }
 
 class StartupSplashScreen extends StatefulWidget {
@@ -927,8 +958,10 @@ class _CollectionManagerScreenState extends State<CollectionManagerScreen> {
                     return Container(
                       decoration: BoxDecoration(
                         color: auraSurface,
-                        border: Border.all(color: outline),
+                        border:
+                            Border.all(color: outline.withValues(alpha: .78)),
                         borderRadius: BorderRadius.circular(18),
+                        boxShadow: softNeumorphicShadows(strength: .62),
                       ),
                       child: ListTile(
                         leading: Icon(Icons.folder_outlined, color: auraOrange),
@@ -1035,8 +1068,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
           color: auraSurface,
-          border: Border.all(color: outline),
+          border: Border.all(color: outline.withValues(alpha: .78)),
           borderRadius: BorderRadius.circular(20),
+          boxShadow: softNeumorphicShadows(strength: .72),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -2107,6 +2141,7 @@ class _LibraryScreenState extends State<LibraryScreen>
   void _toggleSelection(SavedItem item) {
     final id = item.id;
     if (id == null) return;
+    unawaited(HapticFeedback.selectionClick());
     setState(() {
       if (!_selectedItemIds.add(id)) _selectedItemIds.remove(id);
     });
@@ -3261,11 +3296,15 @@ class _LibraryScreenState extends State<LibraryScreen>
           mainAxisSpacing: 12,
           childAspectRatio: gallery ? .82 : .72,
         ),
-        itemBuilder: (context, index) =>
-            _gridRecord(records[index], gallery: gallery)
-                .animate()
-                .fadeIn(duration: 220.ms)
-                .slideY(begin: .035, duration: 220.ms),
+        itemBuilder: (context, index) {
+          final card = _gridRecord(records[index], gallery: gallery);
+          if (MediaQuery.of(context).disableAnimations) return card;
+          return card
+              .animate()
+              .fadeIn(duration: 180.ms, curve: Curves.easeOutCubic)
+              .slideY(
+                  begin: .025, duration: 180.ms, curve: Curves.easeOutCubic);
+        },
       );
 
   Widget _loadingPlaceholder() => Skeletonizer(
@@ -3298,166 +3337,171 @@ class _LibraryScreenState extends State<LibraryScreen>
   Widget _gridRecord(SavedItem item, {required bool gallery}) => Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: .28),
-              blurRadius: 12,
-              offset: const Offset(0, 5),
-            ),
-          ],
+          boxShadow: softNeumorphicShadows(),
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(20),
-          child: Material(
-            color: auraSurface,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-              side: BorderSide(
-                  color:
-                      _selectedItemIds.contains(item.id) ? auraOrange : outline,
-                  width: _selectedItemIds.contains(item.id) ? 2 : 1),
-            ),
-            child: InkWell(
-              onTap: () => _handleItemTap(item),
-              onLongPress: () => _toggleSelection(item),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Expanded(
-                        flex: gallery ? 10 : 6,
-                        child: _heroImage(item),
-                      ),
-                      if (!gallery)
+          child: AnimatedScale(
+            scale: _selectedItemIds.contains(item.id) ? .99 : 1,
+            duration: MediaQuery.of(context).disableAnimations
+                ? Duration.zero
+                : const Duration(milliseconds: 140),
+            curve: Curves.easeOutCubic,
+            child: Material(
+              color: auraSurface,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+                side: BorderSide(
+                    color: _selectedItemIds.contains(item.id)
+                        ? auraOrange
+                        : outline,
+                    width: _selectedItemIds.contains(item.id) ? 2 : 1),
+              ),
+              child: InkWell(
+                onTap: () => _handleItemTap(item),
+                onLongPress: () => _toggleSelection(item),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
                         Expanded(
-                          flex: 5,
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(14, 12, 10, 10),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(item.title,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                        color: primaryText,
-                                        fontWeight: FontWeight.w700)),
-                                const Spacer(),
-                                Row(
-                                  children: [
-                                    if (!item.isRead)
-                                      Container(
-                                        width: 7,
-                                        height: 7,
-                                        margin: const EdgeInsets.only(right: 7),
-                                        decoration: BoxDecoration(
-                                          color: auraOrange,
-                                          shape: BoxShape.circle,
+                          flex: gallery ? 10 : 6,
+                          child: _heroImage(item),
+                        ),
+                        if (!gallery)
+                          Expanded(
+                            flex: 5,
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.fromLTRB(14, 12, 10, 10),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(item.title,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                          color: primaryText,
+                                          fontWeight: FontWeight.w700)),
+                                  const Spacer(),
+                                  Row(
+                                    children: [
+                                      if (!item.isRead)
+                                        Container(
+                                          width: 7,
+                                          height: 7,
+                                          margin:
+                                              const EdgeInsets.only(right: 7),
+                                          decoration: BoxDecoration(
+                                            color: auraOrange,
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                      if (item.url.isNotEmpty) ...[
+                                        Icon(Icons.link_rounded,
+                                            size: 14, color: auraOrange),
+                                        const SizedBox(width: 4),
+                                      ],
+                                      Expanded(
+                                        child: Text(
+                                          item.url.isNotEmpty
+                                              ? Uri.tryParse(item.url)?.host ??
+                                                  'Link'
+                                              : item.type.toUpperCase(),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                              color: secondaryText,
+                                              fontSize: 12),
                                         ),
                                       ),
-                                    if (item.url.isNotEmpty) ...[
-                                      Icon(Icons.link_rounded,
-                                          size: 14, color: auraOrange),
-                                      const SizedBox(width: 4),
+                                      if (item.url.isNotEmpty &&
+                                          _selectedItemIds.isEmpty)
+                                        _cardActionButton(
+                                          icon: Icons.open_in_new_rounded,
+                                          tooltip: 'Open saved link',
+                                          color: auraOrange,
+                                          onPressed: () => _open(item),
+                                        ),
                                     ],
-                                    Expanded(
-                                      child: Text(
-                                        item.url.isNotEmpty
-                                            ? Uri.tryParse(item.url)?.host ??
-                                                'Link'
-                                            : item.type.toUpperCase(),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                            color: secondaryText, fontSize: 12),
-                                      ),
-                                    ),
-                                    if (item.url.isNotEmpty &&
-                                        _selectedItemIds.isEmpty)
-                                      _cardActionButton(
-                                        icon: Icons.open_in_new_rounded,
-                                        tooltip: 'Open saved link',
-                                        color: auraOrange,
-                                        onPressed: () => _open(item),
-                                      ),
-                                  ],
-                                ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    if (gallery)
+                      Positioned.fill(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                Colors.transparent,
+                                Colors.black.withValues(alpha: .68),
                               ],
                             ),
                           ),
                         ),
-                    ],
-                  ),
-                  if (gallery)
-                    Positioned.fill(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Colors.transparent,
-                              Colors.black.withValues(alpha: .68),
-                            ],
-                          ),
+                      ),
+                    if (gallery)
+                      Positioned(
+                        left: 12,
+                        right: 58,
+                        bottom: 14,
+                        child: Text(item.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700)),
+                      ),
+                    if (gallery &&
+                        item.url.isNotEmpty &&
+                        _selectedItemIds.isEmpty)
+                      Positioned(
+                        right: 4,
+                        bottom: 4,
+                        child: _cardActionButton(
+                          icon: Icons.open_in_new_rounded,
+                          tooltip: 'Open saved link',
+                          color: auraOrange,
+                          onPressed: () => _open(item),
                         ),
                       ),
-                    ),
-                  if (gallery)
-                    Positioned(
-                      left: 12,
-                      right: 58,
-                      bottom: 14,
-                      child: Text(item.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700)),
-                    ),
-                  if (gallery &&
-                      item.url.isNotEmpty &&
-                      _selectedItemIds.isEmpty)
-                    Positioned(
-                      right: 4,
-                      bottom: 4,
-                      child: _cardActionButton(
-                        icon: Icons.open_in_new_rounded,
-                        tooltip: 'Open saved link',
-                        color: auraOrange,
-                        onPressed: () => _open(item),
+                    if (_selectedItemIds.isNotEmpty)
+                      Positioned(
+                        top: 8,
+                        left: 8,
+                        child: _selectionBadge(item),
                       ),
-                    ),
-                  if (_selectedItemIds.isNotEmpty)
-                    Positioned(
-                      top: 8,
-                      left: 8,
-                      child: _selectionBadge(item),
-                    ),
-                  if (_selectedItemIds.isEmpty) ...[
-                    Positioned(
-                      top: 8,
-                      right: 4,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _cardActionButton(
-                            icon: Icons.edit_outlined,
-                            tooltip: 'Edit item',
-                            color: primaryText,
-                            onPressed: () => _edit(item),
-                          ),
-                          const SizedBox(height: 4),
-                          _favoriteButton(item, onThumbnail: true),
-                          const SizedBox(height: 4),
-                          _pinButton(item, onThumbnail: true),
-                        ],
+                    if (_selectedItemIds.isEmpty) ...[
+                      Positioned(
+                        top: 8,
+                        right: 4,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _cardActionButton(
+                              icon: Icons.edit_outlined,
+                              tooltip: 'Edit item',
+                              color: primaryText,
+                              onPressed: () => _edit(item),
+                            ),
+                            const SizedBox(height: 4),
+                            _favoriteButton(item, onThumbnail: true),
+                            const SizedBox(height: 4),
+                            _pinButton(item, onThumbnail: true),
+                          ],
+                        ),
                       ),
-                    ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
           ),
@@ -3470,16 +3514,24 @@ class _LibraryScreenState extends State<LibraryScreen>
     required Color color,
     required VoidCallback onPressed,
   }) =>
-      Material(
-        color: auraDepth.withValues(alpha: .92),
-        shape: const CircleBorder(),
-        child: IconButton(
-          tooltip: tooltip,
-          onPressed: onPressed,
-          icon: Icon(icon, color: color, size: 19),
-          constraints: const BoxConstraints.tightFor(width: 48, height: 48),
-          padding: const EdgeInsets.all(12),
-          visualDensity: VisualDensity.compact,
+      Container(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          boxShadow: softNeumorphicShadows(strength: .5),
+          border: Border.all(color: outline.withValues(alpha: .8)),
+        ),
+        child: Material(
+          color: auraDepth,
+          shape: const CircleBorder(),
+          clipBehavior: Clip.antiAlias,
+          child: IconButton(
+            tooltip: tooltip,
+            onPressed: onPressed,
+            icon: Icon(icon, color: color, size: 19),
+            constraints: const BoxConstraints.tightFor(width: 48, height: 48),
+            padding: const EdgeInsets.all(12),
+            visualDensity: VisualDensity.compact,
+          ),
         ),
       );
 
@@ -3502,22 +3554,36 @@ class _LibraryScreenState extends State<LibraryScreen>
         onPressed: () => _runItemAction(item, 'pin'),
       );
 
-  Widget _selectionBadge(SavedItem item) => Container(
+  Widget _selectionBadge(SavedItem item) {
+    final selected = _selectedItemIds.contains(item.id);
+    final duration = MediaQuery.of(context).disableAnimations
+        ? Duration.zero
+        : const Duration(milliseconds: 180);
+    return AnimatedContainer(
+        duration: duration,
+        curve: Curves.easeOutCubic,
         width: 34,
         height: 34,
         decoration: BoxDecoration(
-          color: _selectedItemIds.contains(item.id) ? auraOrange : auraDepth,
+          color: selected ? auraOrange : auraDepth,
           shape: BoxShape.circle,
-          border: Border.all(color: primaryText, width: 1.5),
+          border: Border.all(color: primaryText, width: selected ? 1.5 : 1),
         ),
-        child: Icon(
-          _selectedItemIds.contains(item.id)
-              ? Icons.check_rounded
-              : Icons.circle_outlined,
-          color: _selectedItemIds.contains(item.id) ? auraBase : primaryText,
-          size: 20,
-        ),
-      );
+        child: AnimatedSwitcher(
+          duration: duration,
+          switchInCurve: Curves.easeOutBack,
+          transitionBuilder: (child, animation) => ScaleTransition(
+            scale: animation,
+            child: child,
+          ),
+          child: Icon(
+            selected ? Icons.check_rounded : Icons.circle_outlined,
+            key: ValueKey(selected),
+            color: selected ? auraBase : primaryText,
+            size: 20,
+          ),
+        ));
+  }
 
   Widget _heroImage(SavedItem item) {
     if (item.imageUrl.isEmpty) return _heroFallback(item);
@@ -3892,17 +3958,9 @@ class GlassSurface extends StatelessWidget {
           color: yellowCard ? auraGold : auraSurface,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: yellowCard ? auraGold : outline,
+            color: yellowCard ? auraGold : outline.withValues(alpha: .78),
           ),
-          boxShadow: blur
-              ? [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: .18),
-                    blurRadius: 16,
-                    offset: const Offset(0, 6),
-                  ),
-                ]
-              : const [],
+          boxShadow: blur ? softNeumorphicShadows(strength: .82) : const [],
         ),
         child: child,
       );
